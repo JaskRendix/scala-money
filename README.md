@@ -50,20 +50,25 @@ Apache License 2.0 — © 2014–2026 Alessandro Lacava.
 
 ---
 
+Here’s a tightened, updated rewrite of your “What Actually Changed” section — **same tone, same voice, same structure**, but with all the updates from your modernized engine and without fluff or adverbs.
+
+---
+
 ## What Actually Changed
 
-I focused on the stuff that always matters in this space: clean currency handling, predictable math, and code that won't blow up in a backtesting or trading pipeline.
+I focused on the parts that matter in a money DSL: predictable math, stable FX behavior, and a model that behaves the same way in every pipeline that touches it.
 
-Here's the no‑nonsense rundown of what was updated:
+Here’s the direct rundown of what was updated:
 
-- **Currency factory** — Dropped the giant pile of predefined currency objects. Now it's just `Currency("USD")`. Cleaner, faster, and no more maintaining a zoo of case objects.
-- **Scala 3 modernization** — Replaced legacy implicits and implicit classes with proper `extension` methods and `given` instances. The API is now idiomatic Scala 3 instead of “Scala 2 with syntax sugar”.
-- **Implicit scope fixes** — `given Converter` and `DEFAULT_CURRENCY` now live in stable, discoverable locations so the compiler actually finds them. No more “MissingRate(EUR,USD)” because a closure lost an implicit.
-- **Specs2 + ScalaCheck stability** — Removed the mathematically invalid USD→EUR→USD round‑trip property. FX rates aren't symmetric, so the test was guaranteed to fail. The rest of the property suite now runs cleanly.
-- **Expanded test suite** — Added new tests that actually reflect real FX behavior: cross‑currency comparison invariants, safe operation guarantees, identity‑conversion properties, and arithmetic consistency checks. The suite grew from 6 meaningful tests to 39.
-- **Updated usage example** — Modernized the example to demonstrate the Scala 3 API, safe conversions, safe comparisons, rounding, and cross‑currency arithmetic. It now reflects real‑world usage instead of just compiling.
-- **Whitespace/formatting cleanup** — Eliminated the “expression does not take parameters” errors caused by over‑eager formatting tools. The codebase is now scalafmt‑friendly.
-- **Standardized API** — Everything consistently uses `Money(amount, currency)`. Examples, docs, and tests no longer drift apart.
-- **CI reliability** — Examples now compile during CI, so nothing silently rots in the background.
+- **Currency factory** — Replaced the old case‑object zoo with a single `Currency("USD")` constructor backed by `java.util.Currency`. No drift, no maintenance overhead.
+- **Scala 3 modernization** — Removed legacy implicits and implicit classes. Everything now uses `given`, `using`, and `extension` so the API is clear and consistent.
+- **Implicit scope stability** — `given Converter` and `DEFAULT_CURRENCY` now sit in stable locations. Conversions no longer fail because an implicit slipped out of scope.
+- **FX engine rewrite** — Added multi‑leg routing, bid/ask handling, and time‑dependent curves. Direct lookups power comparison; routing powers conversion. The behavior is explicit and predictable.
+- **Comparison semantics** — Comparison now uses direct BID quotes only, matching real FX value checks and removing the old asymmetric behavior.
+- **Error model** — Introduced `MissingCurve` and `NoConversionPath` so failures are clear and typed. `safeTo` and `safeCompare` never throw.
+- **Test suite expansion** — Added tests for routing, spreads, time‑dependent curves, comparison rules, error handling, and identity properties. The suite now covers the full engine.
+- **Example update** — Rewrote the example to show routing, safe operations, comparison, rounding, and error handling. It now reflects the actual API.
+- **Formatting cleanup** — Removed formatting traps and made the codebase scalafmt‑friendly.
+- **API consistency** — Everything uses `Money(amount, currency)` with no hidden constructors or alternate paths.
 
-Nothing flashy — just took an old finance DSL, cleaned it up, made it predictable, and got it ready for real‑world use. The kind of tune‑up you want before trusting it with actual money.
+The result is a small DSL that behaves the same way in every context: conversions route, comparisons don’t, errors are typed, and the API is stable.
