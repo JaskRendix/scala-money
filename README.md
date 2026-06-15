@@ -67,6 +67,3 @@ Here's the no‑nonsense rundown of what was updated:
 - **CI reliability** — Examples now compile during CI, so nothing silently rots in the background.
 
 Nothing flashy — just took an old finance DSL, cleaned it up, made it predictable, and got it ready for real‑world use. The kind of tune‑up you want before trusting it with actual money.
-
-
-scala, scala3, dsl, finance, money, currency-conversion, type-safe, fx
