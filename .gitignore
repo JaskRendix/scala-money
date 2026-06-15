@@ -1,0 +1,29 @@
+# SBT
+target/
+project/project
+project/target
+
+# Logs & temp
+*.log
+tmp/
+logs/
+data/
+
+# Shell scripts (optional)
+*.sh
+
+# Build caches
+.cache
+
+# VS Code
+.vscode/
+
+# Metals / Bloop (Scala tooling)
+.metals/
+.bloop/
+
+# Scalafmt config (optional)
+.scalafmt
+
+# Private files
+private/
