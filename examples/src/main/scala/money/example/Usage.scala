@@ -8,13 +8,14 @@ object Usage {
   val GBP = Currency("GBP")
 
   def main(args: Array[String]): Unit = {
-    val conversion: Map[(Currency, Currency), BigDecimal] = Map(
-      (EUR, USD) -> BigDecimal("1.13"),
-      (EUR, GBP) -> BigDecimal("0.71"),
-      (USD, EUR) -> BigDecimal("0.88"),
-      (USD, GBP) -> BigDecimal("0.63"),
-      (GBP, EUR) -> BigDecimal("1.40"),
-      (GBP, USD) -> BigDecimal("1.59")
+
+    val conversion: Map[(Currency, Currency), FxCurve] = Map(
+      (EUR, USD) -> ConstantCurve(FxQuote(1.13, 1.13)),
+      (EUR, GBP) -> ConstantCurve(FxQuote(0.71, 0.71)),
+      (USD, EUR) -> ConstantCurve(FxQuote(0.88, 0.88)),
+      (USD, GBP) -> ConstantCurve(FxQuote(0.63, 0.63)),
+      (GBP, EUR) -> ConstantCurve(FxQuote(1.40, 1.40)),
+      (GBP, USD) -> ConstantCurve(FxQuote(1.59, 1.59))
     )
 
     given converter: Converter = Converter(conversion)
@@ -36,7 +37,7 @@ object Usage {
     println("\n--- Safe conversions ---")
     println(Money(100, USD).safeTo(EUR))             // Right(88 EUR)
     println(Money(100, USD).safeTo(GBP))             // Right(63 GBP)
-    println(Money(100, USD).safeTo(Currency("JPY"))) // Left(MissingRate)
+    println(Money(100, USD).safeTo(Currency("JPY"))) // Left(MissingCurve)
 
     println("\n--- Safe comparisons ---")
     println(Money(100, USD).safeCompare(Money(50, EUR)))

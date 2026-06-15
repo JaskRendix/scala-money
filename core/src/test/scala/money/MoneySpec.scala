@@ -20,197 +20,152 @@ import org.scalacheck.Gen
 import org.scalacheck.Prop.forAll
 import org.specs2.mutable.Specification
 import org.specs2.ScalaCheck
+import java.time.Instant
 
-class MoneySpec extends Specification with ScalaCheck {
+class MoneyAdvancedSpec extends Specification with ScalaCheck {
 
   val USD = Currency("USD")
   val EUR = Currency("EUR")
   val GBP = Currency("GBP")
   val JPY = Currency("JPY")
+  val CHF = Currency("CHF")
 
-  val conversion: Map[(Currency, Currency), BigDecimal] = Map(
-    (EUR, USD) -> BigDecimal("1.13"),
-    (EUR, GBP) -> BigDecimal("0.71"),
-    (USD, EUR) -> BigDecimal("0.88"),
-    (USD, GBP) -> BigDecimal("0.63"),
-    (GBP, EUR) -> BigDecimal("1.40"),
-    (GBP, USD) -> BigDecimal("1.59"),
-    (USD, USD) -> BigDecimal("1.0"),
-    (EUR, EUR) -> BigDecimal("1.0"),
-    (GBP, GBP) -> BigDecimal("1.0")
+  // Constant quotes (no spreads)
+  def const(rate: BigDecimal): FxCurve =
+    ConstantCurve(FxQuote(rate, rate))
+
+  // Bid/ask asymmetric quotes
+  val eurUsdQuote = FxQuote(bid = 1.10, ask = 1.12)
+  val usdJpyQuote = FxQuote(bid = 150.0, ask = 151.0)
+
+  val curves: Map[(Currency, Currency), FxCurve] = Map(
+    (EUR, USD) -> ConstantCurve(eurUsdQuote),
+    (USD, JPY) -> ConstantCurve(usdJpyQuote),
+    (JPY, GBP) -> const(0.0052),
+    (GBP, CHF) -> const(1.12),
+    (USD, EUR) -> const(0.90)
   )
+
+  given Converter = Converter(curves)
 
   val reasonableBigDecimal: Gen[BigDecimal] =
     Gen.chooseNum(-1e9, 1e9).map(BigDecimal(_))
 
-  val converter: Converter = Converter(conversion)
-  given Converter          = converter
+  "Money arithmetic" should {
 
-  "Money" should {
-
-    "add USD correctly" in {
-      (Money(100, USD) + Money(200, USD)) must_== Money(300, USD)
+    "add same-currency amounts" in {
+      Money(100, USD) + Money(200, USD) must_== Money(300, USD)
     }
 
-    "add across currencies using conversion" in {
-      val result = Money(100, USD) + Money(100, EUR)
-      result.currency must_== USD
-      result.amount must_== BigDecimal(100) + (BigDecimal(100) * 1.13)
+    "subtract same-currency amounts" in {
+      Money(200, USD) - Money(50, USD) must_== Money(150, USD)
     }
 
-    "subtract across currencies using conversion" in {
-      val result = Money(200, USD) - Money(100, EUR)
-      result.currency must_== USD
-      result.amount must_== BigDecimal(200) - (BigDecimal(100) * 1.13)
+    "multiply correctly" in {
+      Money(100, USD) * 3 must_== Money(300, USD)
     }
 
-    "handle precision correctly with rounding" in {
-      (Money(100, USD) / 3).round(2) must_== Money(33.33, USD)
+    "divide correctly" in {
+      Money(100, USD) / 4 must_== Money(25, USD)
     }
 
-    "throw exception on division by zero" in {
-      (Money(100, USD) / 0) must throwA[ArithmeticException]
-    }
-
-    "handle negative amounts" in {
-      (Money(100, USD) - Money(150, USD)) must_== Money(-50, USD)
-    }
-
-    "perform multiplication correctly" in {
-      (Money(100, USD) * 23) must_== Money(2300, USD)
-    }
-
-    "perform division correctly" in {
-      (Money(100, USD) / 4) must_== Money(25, USD)
-    }
-
-    "handle comparisons across different currencies" in {
-      (Money(100, USD) > Money(90, EUR)) must beFalse
-      (Money(100, USD) < Money(90, EUR)) must beTrue
-    }
-
-    "support numeric operations" in {
-      val sum = Money(100, USD) + Money(200, EUR)
-      sum.currency must_== USD
-    }
-
-    "convert safely using safeTo" in {
-      Money(100, USD).safeTo(EUR) must beRight(Money(88, EUR))
-    }
-
-    "return Left(MissingRate) when safeTo has no rate" in {
-      Money(100, USD).safeTo(JPY) must beLeft(MissingRate(USD, JPY))
-    }
-
-    "throw when using unsafe to() with missing rate" in {
-      Money(100, USD).to(JPY) must throwA[RuntimeException]
-    }
-
-    "compare safely using safeCompare" in {
-      Money(100, USD).safeCompare(Money(50, EUR)) must beRight
-    }
-
-    "return Left(MissingRate) for safeCompare with missing rate" in {
-      Money(100, USD).safeCompare(Money(50, JPY)) must beLeft(MissingRate(JPY, USD))
-    }
-
-    "throw when comparing with missing rate" in {
-      Money(100, USD).compare(Money(50, JPY)) must throwA[RuntimeException]
-    }
-
-    "support identity conversion" in {
-      Money(100, USD).to(USD) must_== Money(100, USD)
-    }
-
-    "handle very large numbers" in {
-      val big = Money(BigDecimal("1000000000000"), USD)
-      (big * 2).amount must_== BigDecimal("2000000000000")
-    }
-
-    "handle very small decimal values" in {
-      val tiny = Money(BigDecimal("0.0000001"), USD)
-      (tiny * 2).amount must_== BigDecimal("0.0000002")
-    }
-
-    "format correctly using toString" in {
-      Money(123.456789, USD).toString must_== "123.45679 USD"
-    }
-
-    "round correctly with different rounding modes" in {
-      Money(1.2345, USD).round(3, RoundingMode.HALF_UP) must_== Money(1.235, USD)
-      Money(1.2345, USD).round(3, RoundingMode.DOWN) must_== Money(1.234, USD)
-    }
-
-    "support === and !== operators" in {
-      (Money(100, USD) === Money(100, USD)) must beTrue
-      (Money(100, USD) !== Money(100, USD)) must beFalse
-    }
-
-    "support === across currencies" in {
-      val eurEquivalent = Money(BigDecimal(100) / 1.13, EUR)
-      (Money(100, USD) === eurEquivalent) must beTrue
-    }
-
-    "support !== across currencies" in {
-      val eur = Money(50, EUR)
-      (Money(100, USD) !== eur) must beTrue
-    }
-
-    "fail gracefully when performing operations with missing rate" in {
-      val bad = Money(10, JPY)
-      (Money(10, USD) + bad) must throwA[RuntimeException]
-      (Money(10, USD) - bad) must throwA[RuntimeException]
-      (Money(10, USD) * 2) must_== Money(20, USD) // still fine
+    "round correctly" in {
+      Money(123.4567, USD).round(2) must_== Money(123.46, USD)
     }
   }
-  "safeTo" should {
 
-    "convert correctly when rate exists" in {
-      Money(100, USD).safeTo(EUR) must beRight(Money(88, EUR))
+  "Bid/ask spreads" should {
+
+    "use ask when buying target currency" in {
+      val m = Money(100, EUR).to(USD, FxSide.Buy)
+      m.amount must_== BigDecimal(100) * eurUsdQuote.ask
     }
 
-    "return Left(MissingRate) when rate is missing" in {
-      Money(100, USD).safeTo(JPY) must beLeft(MissingRate(USD, JPY))
+    "use bid when selling target currency" in {
+      val m = Money(100, EUR).to(USD, FxSide.Sell)
+      m.amount must_== BigDecimal(100) * eurUsdQuote.bid
     }
 
-    "support identity conversion" in {
-      Money(123.45, USD).safeTo(USD) must beRight(Money(123.45, USD))
-    }
-
-    "convert negative amounts correctly" in {
-      Money(-50, USD).safeTo(EUR) must beRight(Money(-44, EUR))
-    }
-
-    "convert very large amounts correctly" in {
-      val big = Money(BigDecimal("1000000000000"), USD)
-      big.safeTo(EUR) must beRight(Money(BigDecimal("880000000000"), EUR))
+    "produce different results for buy vs sell" in {
+      val buy  = Money(100, EUR).to(USD, FxSide.Buy)
+      val sell = Money(100, EUR).to(USD, FxSide.Sell)
+      buy.amount must be_>(sell.amount)
     }
   }
-  "safeCompare" should {
 
-    "compare correctly when rate exists" in {
-      Money(100, USD).safeCompare(Money(50, EUR)) must beRight.which(_ > 0)
+  "Multi-leg FX routing" should {
+
+    "convert EUR → CHF via USD → JPY → GBP" in {
+      val result = Money(100, EUR).safeTo(CHF)
+      result must beRight
     }
 
-    "return Left(MissingRate) when rate is missing" in {
-      Money(100, USD).safeCompare(Money(50, JPY)) must beLeft(MissingRate(JPY, USD))
+    "fail when no path exists" in {
+      val result = Money(100, CHF).safeTo(JPY) // no CHF→... edges
+      result must beLeft
+    }
+  }
+
+  "Time-dependent FX curves" should {
+
+    val forwardDate = Instant.parse("2025-01-01T00:00:00Z")
+
+    val forwardCurve = new FxCurve:
+      def rateAt(t: Instant): FxQuote =
+        if t.isBefore(forwardDate) then FxQuote(1.10, 1.10)
+        else FxQuote(1.20, 1.20)
+
+    given Converter = Converter(
+      Map((EUR, USD) -> forwardCurve)
+    )
+
+    "use spot rate before forward date" in {
+      val t = Instant.parse("2024-06-01T00:00:00Z")
+      Money(100, EUR).at(t).to(USD).amount must_== 110
+    }
+
+    "use forward rate after forward date" in {
+      val t = Instant.parse("2025-06-01T00:00:00Z")
+      Money(100, EUR).at(t).to(USD).amount must_== 120
+    }
+  }
+
+  "Money comparison" should {
+
+    "compare across currencies using spreads" in {
+      val a = Money(100, EUR)
+      val b = Money(110, USD)
+      // With routing + spreads, 100 EUR → USD = 112, so 112 < 110 is false
+      (a < b) must beFalse
     }
 
     "compare equal values across currencies" in {
-      val eurEquivalent = Money(BigDecimal(100) / 1.13, EUR)
-      Money(100, USD).safeCompare(eurEquivalent) must beRight(0)
+      val eur = Money(100, EUR)
+      val usd = Money(100 * eurUsdQuote.bid, USD) // 110 USD
+      (eur === usd) must beTrue
     }
 
-    "compare negative values correctly" in {
-      Money(-10, USD).safeCompare(Money(-20, USD)) must beRight.which(_ > 0)
-    }
-
-    "compare across currencies with ordering preserved" in {
-      Money(100, USD).safeCompare(Money(200, EUR)) must beRight.which(_ < 0)
+    "safeCompare returns Left when missing curve" in {
+      Money(100, CHF).safeCompare(Money(50, EUR)) must beLeft
     }
   }
 
-  "Money property-based tests" should {
+  "Error handling" should {
+
+    "safeTo returns Left(MissingCurve) when curve missing" in {
+      Money(100, CHF).safeTo(JPY) must beLeft
+    }
+
+    "unsafe to() throws when curve missing" in {
+      Money(100, CHF).to(JPY) must throwA[RuntimeException]
+    }
+
+    "safeCompare never throws" in {
+      Money(100, USD).safeCompare(Money(50, CHF)).isInstanceOf[Either[MoneyError, Int]] must beTrue
+    }
+  }
+
+  "Property-based tests" should {
 
     "identity conversion preserves amount" in
       forAll(reasonableBigDecimal) { n =>

@@ -15,6 +15,7 @@
  */
 package money
 
+import java.time.Instant
 import scala.math.BigDecimal.RoundingMode
 import scala.math.BigDecimal.RoundingMode.RoundingMode
 import money.{toFormattedString => bigDecimalToFormattedString}
@@ -26,22 +27,41 @@ import money.{toFormattedString => bigDecimalToFormattedString}
  *   the numeric value
  * @param currency
  *   the associated currency
+ * @param timestamp
+ *   timestamp for time‑dependent FX (defaults to "now")
  * @param converter
  *   contextual converter used for currency operations
  */
-final case class Money(amount: BigDecimal, currency: Currency)(using converter: Converter) extends Ordered[Money]:
+final case class Money(
+  amount: BigDecimal,
+  currency: Currency,
+  timestamp: Instant = Instant.now()
+)(using converter: Converter)
+    extends Ordered[Money]:
 
-  /** Converts this money to another currency. */
+  /** Attach a timestamp to this Money for time‑dependent FX. */
+  def at(t: Instant): Money =
+    copy(timestamp = t)
+
+  /** Converts this money to another currency using mid‑market spot. */
   def to(target: Currency): Money =
-    converter.conversionRate(currency, target) match
-      case Right(rate) =>
-        Money(amount * rate, target)
+    safeTo(target) match
+      case Right(m) => m
       case Left(err) =>
         throw new RuntimeException(err.toString)
 
   /** Safe version of `to`, returning an Either instead of throwing. */
   def safeTo(target: Currency): Either[MoneyError, Money] =
-    converter.convert(this, target)
+    converter
+      .conversionRateAt(this.currency, target, timestamp, FxSide.Buy)
+      .map(rate => Money(this.amount * rate, target, timestamp))
+
+  /** Convert using explicit side (Buy/Sell). */
+  def to(target: Currency, side: FxSide): Money =
+    converter.convertAt(this, target, timestamp, side) match
+      case Right(m) => m
+      case Left(err) =>
+        throw new RuntimeException(err.toString)
 
   /** Adds two Money values, converting currencies if needed. */
   def +(that: Money): Money =
@@ -61,11 +81,15 @@ final case class Money(amount: BigDecimal, currency: Currency)(using converter: 
 
   /** Multiplies this Money by a numeric value. */
   def *(value: BigDecimal): Money =
-    performOperation(Money(value, this.currency), _ * _)
+    copy(amount = amount * value)
 
   /** Divides this Money by a numeric value. */
   def /(value: BigDecimal): Money =
-    performOperation(Money(value, this.currency), _ / _)
+    copy(amount = amount / value)
+
+  /** Round this Money to n decimal places (HALF_UP by default). */
+  def round(n: Int, mode: RoundingMode = RoundingMode.HALF_UP): Money =
+    copy(amount = amount.setScale(n, mode))
 
   /** Equality comparison after converting currencies. */
   def ===(that: Money): Boolean =
@@ -75,37 +99,45 @@ final case class Money(amount: BigDecimal, currency: Currency)(using converter: 
   def !==(that: Money): Boolean =
     this.compare(that) != 0
 
-  /** Rounds this Money to a given number of decimal digits. */
-  def round(decimalDigits: Int, roundingMode: RoundingMode = RoundingMode.HALF_DOWN): Money =
-    Money(amount.setScale(decimalDigits, roundingMode), currency)
-
-  override def toString: String =
-    toFormattedString()
-
   /** Compares two Money values after converting currencies. */
   override def compare(that: Money): Int =
-    converter.conversionRate(that.currency, this.currency) match
-      case Right(rate) =>
-        val thatAmount = rate * that.amount
-        this.amount compare thatAmount
+    safeCompare(that) match
+      case Right(cmp) => cmp
       case Left(err) =>
         throw new RuntimeException(err.toString)
 
   /** Safe version of compare, returning Either instead of throwing. */
   def safeCompare(that: Money): Either[MoneyError, Int] =
-    converter.conversionRate(that.currency, this.currency).map { rate =>
-      val thatAmount = rate * that.amount
-      this.amount compare thatAmount
-    }
+    converter
+      .directRate(this.currency, that.currency, this.timestamp, FxSide.Sell)
+      .map { rate =>
+        val thisInThat = this.amount * rate
+        thisInThat compare that.amount
+      }
 
   /** Pretty formatting helper. */
   def toFormattedString(decimalDigits: Int = 5): String =
     s"${bigDecimalToFormattedString(amount, decimalDigits)} ${currency.toString}"
 
-  /** Internal helper for +, -, *, /. */
-  private def performOperation(that: Money, op: (BigDecimal, BigDecimal) => BigDecimal): Money =
-    converter.convert(that, this.currency) match
+  override def toString: String =
+    toFormattedString()
+
+  override def equals(other: Any): Boolean =
+    other match
+      case m: Money =>
+        this.amount == m.amount &&
+        this.currency == m.currency
+      case _ => false
+
+  override def hashCode(): Int =
+    (amount, currency).hashCode()
+
+  private def performOperation(
+    that: Money,
+    op: (BigDecimal, BigDecimal) => BigDecimal
+  ): Money =
+    converter.convertAt(that, this.currency, timestamp, FxSide.Buy) match
       case Right(converted) =>
-        Money(op(this.amount, converted.amount), this.currency)
+        copy(amount = op(this.amount, converted.amount))
       case Left(err) =>
         throw new RuntimeException(err.toString)

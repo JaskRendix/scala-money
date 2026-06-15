@@ -1,6 +1,6 @@
 lazy val scoverageVersion  = "2.2.2"
 lazy val sbtUpdatesVersion = "0.6.4"
-lazy val scalafmtVersion   = "2.5.2"
+lazy val scalafmtVersion   = "2.5.4"
 
 // Plugins
 addSbtPlugin("org.scalameta"    % "sbt-scalafmt"   % scalafmtVersion)

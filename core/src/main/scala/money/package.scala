@@ -18,12 +18,17 @@ package money
 import scala.math.BigDecimal.RoundingMode
 import scala.math.BigDecimal.RoundingMode.RoundingMode
 import java.text.DecimalFormat
+import java.time.Instant
 
 package object money {
+
+  /** Default currency used when none is specified. */
   implicit val DEFAULT_CURRENCY: Currency = Currency("USD")
 
-  type Conversion = Map[(Currency, Currency), BigDecimal]
+  /** New type alias: FX curves instead of static rates. */
+  type Conversion = Map[(Currency, Currency), FxCurve]
 
+  /** Pretty formatting for BigDecimal values. */
   def toFormattedString(
     value: BigDecimal,
     decimalDigits: Int = 5,
@@ -46,14 +51,21 @@ package object money {
   }
 
   extension (value: BigDecimal)
-    def apply(currency: Currency)(using converter: Converter): Money = Money(value, currency)
+    def apply(currency: Currency)(using converter: Converter): Money =
+      Money(value, currency)
 
   extension (value: Int)
-    def apply(currency: Currency)(using converter: Converter): Money = Money(BigDecimal(value), currency)
+    def apply(currency: Currency)(using converter: Converter): Money =
+      Money(BigDecimal(value), currency)
 
   extension (value: Double)
-    def apply(currency: Currency)(using converter: Converter): Money = Money(BigDecimal(value), currency)
+    def apply(currency: Currency)(using converter: Converter): Money =
+      Money(BigDecimal(value), currency)
 
+  /** Timestamp syntax: Money(100, USD).at(Instant) */
+  extension (m: Money) def at(t: Instant): Money = m.at(t)
+
+  /** Numeric instance for Money. */
   implicit def numericMoney(using converter: Converter): NumericMoney =
     new NumericMoney(DEFAULT_CURRENCY)
 }
