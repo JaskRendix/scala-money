@@ -17,41 +17,30 @@ package money
 
 import java.util.Currency as JCurrency
 
-/**
- * Generic Currency trait
- */
-trait Currency {
-  def getCode: String
+/** ISO 4217 currency, value-equal by code. */
+final case class Currency private (getCode: String):
   override def toString: String = getCode
-}
 
-/**
- * Currency Factory
- */
-object Currency {
-  val $   = apply("USD")
-  val EUR = apply("EUR")
-  val GBP = apply("GBP")
+object Currency:
 
-  /**
-   * Creates a Currency instance from an ISO 4217 code. Leverages java.util.Currency to support all standard codes.
-   */
-  def apply(code: String): Currency = {
-    val normalizedCode = code.toUpperCase match {
-      case "$"   => "USD"
-      case "€"   => "EUR"
-      case "£"   => "GBP"
-      case other => other
-    }
+  lazy val USD: Currency = apply("USD")
+  lazy val EUR: Currency = apply("EUR")
+  lazy val GBP: Currency = apply("GBP")
 
-    try {
-      val javaCurr = JCurrency.getInstance(normalizedCode)
-      new Currency {
-        val getCode: String = javaCurr.getCurrencyCode
-      }
-    } catch {
+  private val symbolMap: Map[String, String] = Map(
+    "$" -> "USD",
+    "€" -> "EUR",
+    "£" -> "GBP",
+    "¥" -> "JPY",
+    "₩" -> "KRW",
+    "₣" -> "CHF"
+  )
+
+  def apply(code: String): Currency =
+    val normalized = symbolMap.getOrElse(code.toUpperCase, code.toUpperCase)
+    try
+      val jc = JCurrency.getInstance(normalized)
+      new Currency(jc.getCurrencyCode)
+    catch
       case e: IllegalArgumentException =>
-        throw IllegalArgumentException(s"Unknown or unsupported currency code: $code")
-    }
-  }
-}
+        throw IllegalArgumentException(s"Unknown or unsupported currency code: '$code'", e)

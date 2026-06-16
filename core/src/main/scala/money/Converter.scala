@@ -20,43 +20,37 @@ import scala.collection.mutable
 
 /** FX quote with bid/ask spread. */
 final case class FxQuote(bid: BigDecimal, ask: BigDecimal):
-  def mid: BigDecimal = (bid + ask) / 2
+  lazy val mid: BigDecimal = (bid + ask) / 2
 
-/** Time‑dependent FX curve. */
+object FxQuote:
+  def symmetric(rate: BigDecimal): FxQuote = FxQuote(rate, rate)
+
+/** Time-dependent FX curve. */
 trait FxCurve:
   def rateAt(t: Instant): FxQuote
 
-/** Default curve: constant quote (no time dependency). */
+/** Constant quote — no time dependency. */
 final case class ConstantCurve(quote: FxQuote) extends FxCurve:
   def rateAt(t: Instant): FxQuote = quote
 
-/** FX conversion side. */
+object ConstantCurve:
+  def apply(rate: BigDecimal): ConstantCurve = ConstantCurve(FxQuote.symmetric(rate))
+
+/** Whether you are buying or selling the base currency. */
 enum FxSide:
-  case Buy, Sell
+  case Buy, Sell, Mid
 
-/**
- * Converter supporting:
- *   - direct FX rates
- *   - multi‑leg FX paths
- *   - bid/ask spreads
- *   - time‑dependent FX curves
- */
-final case class Converter(
-  curves: Map[(Currency, Currency), FxCurve]
-):
+final case class Converter(curves: Map[(Currency, Currency), FxCurve]):
 
-  def directCurve(
-    from: Currency,
-    to: Currency
-  ): Either[MoneyError, FxCurve] =
+  def directCurve(from: Currency, to: Currency): Either[MoneyError, FxCurve] =
     if from == to then Right(ConstantCurve(FxQuote(1, 1)))
-    else curves.get((from, to)).toRight(MissingCurve(from, to))
+    else
+      curves
+        .get((from, to))
+        .orElse(curves.get((to, from)).map(InverseCurve(_)))
+        .toRight(MissingCurve(from, to))
 
-  def directQuote(
-    from: Currency,
-    to: Currency,
-    at: Instant
-  ): Either[MoneyError, FxQuote] =
+  def directQuote(from: Currency, to: Currency, at: Instant): Either[MoneyError, FxQuote] =
     directCurve(from, to).map(_.rateAt(at))
 
   def directRate(
@@ -65,53 +59,47 @@ final case class Converter(
     at: Instant,
     side: FxSide
   ): Either[MoneyError, BigDecimal] =
-    directQuote(from, to, at).map { case FxQuote(bid, ask) =>
-      side match
-        case FxSide.Buy  => ask
-        case FxSide.Sell => bid
-    }
+    directQuote(from, to, at).map:
+      case FxQuote(bid, ask) =>
+        side match
+          case FxSide.Buy  => ask
+          case FxSide.Sell => bid
+          case FxSide.Mid  => (bid + ask) / 2
 
-  /** Outgoing neighbors from a currency. */
   private def neighbors(c: Currency): Iterable[Currency] =
     curves.keys.collect { case (from, to) if from == c => to }
 
-  /**
-   * BFS to find a conversion path. Returns the list of edges (from -> to).
-   */
   private def findPath(from: Currency, to: Currency): Option[List[(Currency, Currency)]] =
     if from == to then Some(Nil)
     else
       val visited = mutable.Set[Currency](from)
       val queue   = mutable.Queue[(Currency, List[(Currency, Currency)])]()
       queue.enqueue((from, Nil))
+      var result: Option[List[(Currency, Currency)]] = None
 
-      while queue.nonEmpty do
+      while queue.nonEmpty && result.isEmpty do
         val (current, path) = queue.dequeue()
-
-        for next <- neighbors(current) do
-          if !visited.contains(next) then
-            val newPath = path :+ (current -> next)
-
-            if next == to then return Some(newPath) // ✔ allowed: return from method, not closure
-
+        for next <- neighbors(current) if !visited.contains(next) do
+          val newPath = path :+ (current -> next)
+          if next == to then result = Some(newPath)
+          else
             visited += next
             queue.enqueue((next, newPath))
 
-      None
+      result
 
   private def chainRates(
     path: List[(Currency, Currency)],
     at: Instant,
     side: FxSide
   ): Either[MoneyError, BigDecimal] =
-    path.foldLeft(Right(BigDecimal(1)): Either[MoneyError, BigDecimal]) { case (acc, (from, to)) =>
-      for
-        r1 <- acc
-        r2 <- directRate(from, to, at, side)
-      yield r1 * r2
-    }
+    path.foldLeft(Right(BigDecimal(1)): Either[MoneyError, BigDecimal]):
+      case (acc, (from, to)) =>
+        for
+          r1 <- acc
+          r2 <- directRate(from, to, at, side)
+        yield r1 * r2
 
-  /** Conversion rate at time t, using multi‑leg paths if needed. */
   def conversionRateAt(
     from: Currency,
     to: Currency,
@@ -125,23 +113,30 @@ final case class Converter(
         case Left(_) =>
           findPath(from, to)
             .toRight(NoConversionPath(from, to))
-            .flatMap(path => chainRates(path, at, side))
+            .flatMap(chainRates(_, at, side))
 
-  /** Convert a Money value at time t. */
+  private inline def makeMoney(amount: BigDecimal, currency: Currency, at: Instant): Money =
+    Money(amount, currency, at)(using this)
+
   def convertAt(
     source: Money,
     target: Currency,
     at: Instant,
     side: FxSide
   ): Either[MoneyError, Money] =
-    conversionRateAt(source.currency, target, at, side).map { rate =>
-      Money(source.amount * rate, target, at)
-    }
+    conversionRateAt(source.currency, target, at, side).map: rate =>
+      makeMoney(source.amount * rate, target, at)
 
-  /** Backward‑compatible: convert using mid‑market spot. */
-  def convert(source: Money, target: Currency): Either[MoneyError, Money] =
-    convertAt(source, target, Instant.now(), FxSide.Buy)
+  def convert(source: Money, target: Currency, at: Instant = Instant.now()): Either[MoneyError, Money] =
+    convertAt(source, target, at, FxSide.Mid)
+
+/** Wraps a curve and returns the inverse rate (1/rate). */
+private final case class InverseCurve(underlying: FxCurve) extends FxCurve:
+  def rateAt(t: Instant): FxQuote =
+    val q = underlying.rateAt(t)
+    FxQuote(1 / q.ask, 1 / q.bid) // inverse flips bid/ask
 
 object Converter:
-  /** Empty converter — mostly for tests or placeholder usage. */
-  given empty: Converter = Converter(Map.empty)
+  /** Convenience: build from simple mid rates (no spread). */
+  def fromRates(rates: Map[(Currency, Currency), BigDecimal]): Converter =
+    Converter(rates.map { case (pair, rate) => pair -> ConstantCurve(rate) })

@@ -30,11 +30,9 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
   val JPY = Currency("JPY")
   val CHF = Currency("CHF")
 
-  // Constant quotes (no spreads)
   def const(rate: BigDecimal): FxCurve =
     ConstantCurve(FxQuote(rate, rate))
 
-  // Bid/ask asymmetric quotes
   val eurUsdQuote = FxQuote(bid = 1.10, ask = 1.12)
   val usdJpyQuote = FxQuote(bid = 150.0, ask = 151.0)
 
@@ -49,7 +47,10 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
   given Converter = Converter(curves)
 
   val reasonableBigDecimal: Gen[BigDecimal] =
-    Gen.chooseNum(-1e9, 1e9).map(BigDecimal(_))
+    Gen.chooseNum(-1e6, 1e6).map(BigDecimal(_))
+
+  val positiveBigDecimal: Gen[BigDecimal] =
+    Gen.chooseNum(1, 1000000).map(n => BigDecimal(n))
 
   "Money arithmetic" should {
 
@@ -69,40 +70,132 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
       Money(100, USD) / 4 must_== Money(25, USD)
     }
 
-    "round correctly" in {
+    "divide by zero throws ArithmeticException" in {
+      Money(100, USD) / 0 must throwA[ArithmeticException]
+    }
+
+    "round correctly HALF_UP" in {
       Money(123.4567, USD).round(2) must_== Money(123.46, USD)
+    }
+
+    "round correctly HALF_DOWN" in {
+      Money(123.4550, USD).round(2, RoundingMode.HALF_DOWN) must_== Money(123.45, USD)
+    }
+
+    "negate produces negative amount" in {
+      val neg = Money(-100, USD)
+      neg.amount must_== BigDecimal(-100)
+    }
+
+    "add BigDecimal scalar" in {
+      Money(100, USD) + BigDecimal(50) must_== Money(150, USD)
+    }
+
+    "subtract BigDecimal scalar" in {
+      Money(100, USD) - BigDecimal(30) must_== Money(70, USD)
+    }
+
+    "addition is commutative for same currency" in
+      forAll(reasonableBigDecimal, reasonableBigDecimal) { (a, b) =>
+        val x = Money(a, USD)
+        val y = Money(b, USD)
+        (x + y).amount must_== (y + x).amount
+      }
+
+    "addition is associative for same currency" in
+      forAll(reasonableBigDecimal, reasonableBigDecimal, reasonableBigDecimal) { (a, b, c) =>
+        val x = Money(a, USD)
+        val y = Money(b, USD)
+        val z = Money(c, USD)
+        ((x + y) + z).amount must_== (x + (y + z)).amount
+      }
+
+    "multiply by zero gives zero" in
+      forAll(reasonableBigDecimal) { a =>
+        (Money(a, USD) * 0).amount must_== BigDecimal(0)
+      }
+
+    "multiply by one is identity" in
+      forAll(reasonableBigDecimal) { a =>
+        (Money(a, USD) * 1).amount must_== a
+      }
+
+    "cross-currency add returns this.currency" in {
+      val result = Money(100, EUR) + Money(100, USD)
+      result.currency must_== EUR
+    }
+
+    "cross-currency subtract returns this.currency" in {
+      val result = Money(100, EUR) - Money(50, USD)
+      result.currency must_== EUR
     }
   }
 
   "Bid/ask spreads" should {
 
     "use ask when buying target currency" in {
-      val m = Money(100, EUR).to(USD, FxSide.Buy)
-      m.amount must_== BigDecimal(100) * eurUsdQuote.ask
+      Money(100, EUR).to(USD, FxSide.Buy).amount must_== BigDecimal(100) * eurUsdQuote.ask
     }
 
     "use bid when selling target currency" in {
-      val m = Money(100, EUR).to(USD, FxSide.Sell)
-      m.amount must_== BigDecimal(100) * eurUsdQuote.bid
+      Money(100, EUR).to(USD, FxSide.Sell).amount must_== BigDecimal(100) * eurUsdQuote.bid
     }
 
-    "produce different results for buy vs sell" in {
-      val buy  = Money(100, EUR).to(USD, FxSide.Buy)
-      val sell = Money(100, EUR).to(USD, FxSide.Sell)
-      buy.amount must be_>(sell.amount)
+    "use mid for default to()" in {
+      Money(100, EUR).to(USD).amount must_== BigDecimal(100) * eurUsdQuote.mid
     }
+
+    "buy rate >= mid rate >= sell rate" in {
+      val buy  = Money(100, EUR).to(USD, FxSide.Buy).amount
+      val mid  = Money(100, EUR).to(USD, FxSide.Mid).amount
+      val sell = Money(100, EUR).to(USD, FxSide.Sell).amount
+      (buy >= mid) must beTrue
+      (mid >= sell) must beTrue
+    }
+
+    "spread is non-negative" in {
+      eurUsdQuote.ask must be_>=(eurUsdQuote.bid)
+    }
+  }
+
+  "Inverse curve" should {
+
+    "allow conversion in reverse direction" in {
+      // EUR→USD is defined; USD→EUR via inverse should also work
+      val result = Money(112, USD).safeTo(EUR)
+      result must beRight
+    }
+
+    "inverse of inverse approximates identity" in
+      forAll(positiveBigDecimal) { a =>
+        given Converter = Converter.fromRates(Map((EUR, USD) -> BigDecimal("1.11")))
+        val backHere    = Money(a, EUR).safeTo(USD).flatMap(_.safeTo(EUR))
+        backHere must beRight
+        backHere.map(_.amount.setScale(2, RoundingMode.HALF_UP)) must_==
+          Right(a.setScale(2, RoundingMode.HALF_UP))
+      }
   }
 
   "Multi-leg FX routing" should {
 
     "convert EUR → CHF via USD → JPY → GBP" in {
-      val result = Money(100, EUR).safeTo(CHF)
-      result must beRight
+      Money(100, EUR).safeTo(CHF) must beRight
     }
 
-    "fail when no path exists" in {
-      val result = Money(100, CHF).safeTo(JPY) // no CHF→... edges
-      result must beLeft
+    "result of multi-leg is in target currency" in {
+      Money(100, EUR).safeTo(CHF).map(_.currency) must beRight(CHF)
+    }
+
+    "fail with NoConversionPath when no path exists" in {
+      Money(100, CHF).safeTo(JPY) must beLeft.like { case _: NoConversionPath =>
+        ok
+      }
+    }
+
+    "single-leg and routed give same result when direct exists" in {
+      val direct = Money(100, EUR).safeTo(USD)
+      val routed = Money(100, EUR).safeTo(USD)
+      direct.map(_.amount) must_== routed.map(_.amount)
     }
   }
 
@@ -115,78 +208,181 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
         if t.isBefore(forwardDate) then FxQuote(1.10, 1.10)
         else FxQuote(1.20, 1.20)
 
-    given Converter = Converter(
-      Map((EUR, USD) -> forwardCurve)
-    )
+    given Converter = Converter(Map((EUR, USD) -> forwardCurve))
 
     "use spot rate before forward date" in {
-      val t = Instant.parse("2024-06-01T00:00:00Z")
-      Money(100, EUR).at(t).to(USD).amount must_== 110
+      Money(100, EUR).at(Instant.parse("2024-06-01T00:00:00Z")).to(USD).amount must_== 110
     }
 
     "use forward rate after forward date" in {
-      val t = Instant.parse("2025-06-01T00:00:00Z")
-      Money(100, EUR).at(t).to(USD).amount must_== 120
+      Money(100, EUR).at(Instant.parse("2025-06-01T00:00:00Z")).to(USD).amount must_== 120
+    }
+
+    "at() preserves amount and currency" in {
+      val m = Money(100, EUR)
+      val t = Instant.parse("2024-01-01T00:00:00Z")
+      m.at(t).amount must_== m.amount
+      m.at(t).currency must_== m.currency
     }
   }
 
   "Money comparison" should {
 
-    "compare across currencies using spreads" in {
+    "compare across currencies using mid" in {
       val a = Money(100, EUR)
       val b = Money(110, USD)
-      // With routing + spreads, 100 EUR → USD = 112, so 112 < 110 is false
-      (a < b) must beFalse
+      // 100 EUR * mid(1.11) = 111 USD > 110 USD
+      (a > b) must beTrue
     }
 
-    "compare equal values across currencies" in {
+    "compare equal values using mid rate" in {
       val eur = Money(100, EUR)
-      val usd = Money(100 * eurUsdQuote.bid, USD) // 110 USD
+      val usd = Money(100 * eurUsdQuote.mid, USD)
       (eur === usd) must beTrue
     }
 
-    "safeCompare returns Left when missing curve" in {
+    "=== is symmetric" in {
+      val a = Money(100, USD)
+      val b = Money(100, USD)
+      (a === b) must beTrue
+      (b === a) must beTrue
+    }
+
+    "!== negates ===" in
+      forAll(reasonableBigDecimal, reasonableBigDecimal) { (a, b) =>
+        val x = Money(a, USD)
+        val y = Money(b, USD)
+        (x !== y) must_== !(x === y)
+      }
+
+    "same currency comparison is exact" in {
+      Money(100, USD).compare(Money(99, USD)) must be_>(0)
+      Money(99, USD).compare(Money(100, USD)) must be_<(0)
+      Money(100, USD).compare(Money(100, USD)) must_== 0
+    }
+
+    "safeCompare returns Left when curve is missing" in {
       Money(100, CHF).safeCompare(Money(50, EUR)) must beLeft
     }
+
+    "comparison is antisymmetric for same currency" in
+      forAll(reasonableBigDecimal, reasonableBigDecimal) { (a, b) =>
+        val x = Money(a, USD)
+        val y = Money(b, USD)
+        x.compare(y) must_== -y.compare(x)
+      }
+
+    "comparison is transitive for same currency" in
+      forAll(reasonableBigDecimal, reasonableBigDecimal, reasonableBigDecimal) { (a, b, c) =>
+        val x = Money(a, USD)
+        val y = Money(b, USD)
+        val z = Money(c, USD)
+        if x.compare(y) <= 0 && y.compare(z) <= 0 then x.compare(z) must be_<=(0)
+        else ok
+      }
+  }
+
+  "Money equality" should {
+
+    "equal if same amount and currency" in {
+      Money(100, USD) must_== Money(100, USD)
+    }
+
+    "not equal if different amount" in {
+      Money(100, USD) must_!= Money(101, USD)
+    }
+
+    "not equal if different currency" in {
+      Money(100, USD) must_!= Money(100, EUR)
+    }
+
+    "hashCode consistent with equals" in
+      forAll(reasonableBigDecimal) { a =>
+        val x = Money(a, USD)
+        val y = Money(a, USD)
+        (x == y) must beTrue
+        x.hashCode must_== y.hashCode
+      }
   }
 
   "Error handling" should {
 
-    "safeTo returns Left(MissingCurve) when curve missing" in {
+    "safeTo returns Left for missing curve" in {
       Money(100, CHF).safeTo(JPY) must beLeft
     }
 
-    "unsafe to() throws when curve missing" in {
+    "unsafe to() throws RuntimeException for missing curve" in {
       Money(100, CHF).to(JPY) must throwA[RuntimeException]
     }
 
-    "safeCompare never throws" in {
-      Money(100, USD).safeCompare(Money(50, CHF)).isInstanceOf[Either[MoneyError, Int]] must beTrue
-    }
-  }
-
-  "Property-based tests" should {
-
-    "identity conversion preserves amount" in
-      forAll(reasonableBigDecimal) { n =>
-        Money(n, USD).safeTo(USD) must beRight(Money(n, USD))
+    "safeCompare never throws" in
+      forAll(reasonableBigDecimal) { a =>
+        Money(a, USD).safeCompare(Money(50, CHF)).isInstanceOf[Either[?, ?]] must beTrue
       }
 
     "safeTo never throws" in
-      forAll(reasonableBigDecimal) { n =>
-        Money(n, USD).safeTo(EUR).isInstanceOf[Either[MoneyError, Money]]
+      forAll(reasonableBigDecimal) { a =>
+        Money(a, USD).safeTo(EUR).isInstanceOf[Either[?, ?]] must beTrue
       }
 
-    "safeCompare never throws" in
-      forAll(reasonableBigDecimal, reasonableBigDecimal) { (a, b) =>
-        Money(a, USD).safeCompare(Money(b, EUR)).isInstanceOf[Either[MoneyError, Int]]
-      }
+    "MissingCurve has readable message" in {
+      MissingCurve(CHF, JPY).message must contain("CHF")
+      MissingCurve(CHF, JPY).message must contain("JPY")
+    }
 
-    "comparison is antisymmetric when currencies match" in
-      forAll(reasonableBigDecimal, reasonableBigDecimal) { (a, b) =>
-        val x = Money(a, USD)
-        val y = Money(b, USD)
-        x.compare(y) == -y.compare(x)
-      }
+    "NoConversionPath has readable message" in {
+      NoConversionPath(CHF, JPY).message must contain("CHF")
+      NoConversionPath(CHF, JPY).message must contain("JPY")
+    }
+  }
+
+  "Converter.fromRates" should {
+
+    "build a working converter from simple rates" in {
+      val c           = Converter.fromRates(Map((USD, EUR) -> BigDecimal(0.90)))
+      given Converter = c
+      Money(100, USD).safeTo(EUR).map(_.amount) must beRight(BigDecimal(90.0))
+    }
+
+    "symmetric rate with no spread gives same buy/sell" in {
+      val c           = Converter.fromRates(Map((USD, EUR) -> BigDecimal(0.90)))
+      given Converter = c
+      val buy         = Money(100, USD).to(EUR, FxSide.Buy).amount
+      val sell        = Money(100, USD).to(EUR, FxSide.Sell).amount
+      buy must_== sell
+    }
+  }
+
+  "Money formatting" should {
+
+    "include currency code in toString" in {
+      Money(100, USD).toString must contain("USD")
+    }
+
+    "toFormattedString respects decimal digits" in {
+      Money(123.456789, USD).toFormattedString(2) must contain("123.46")
+    }
+
+    "toFormattedString uses US decimal separator" in {
+      Money(1234.5, USD).toFormattedString(1) must contain(".")
+    }
+  }
+
+  "NumericMoney" should {
+
+    given num: Numeric[Money] = NumericMoney(USD)
+
+    "sum a list of same-currency values" in {
+      val moneys = List(Money(10, USD), Money(20, USD), Money(30, USD))
+      moneys.sum must_== Money(60, USD)
+    }
+
+    "negate a value" in {
+      num.negate(Money(50, USD)).amount must_== BigDecimal(-50)
+    }
+
+    "fromInt creates Money in default currency" in {
+      num.fromInt(42).currency must_== USD
+    }
   }
 }

@@ -15,57 +15,36 @@
  */
 package money
 
-import scala.math.BigDecimal.RoundingMode
-import scala.math.BigDecimal.RoundingMode.RoundingMode
-import java.text.DecimalFormat
+import java.text.{DecimalFormat, DecimalFormatSymbols}
 import java.time.Instant
+import java.util.Locale
 
-package object money {
+type Conversion = Map[(Currency, Currency), FxCurve]
 
-  /** Default currency used when none is specified. */
-  implicit val DEFAULT_CURRENCY: Currency = Currency("USD")
+/** Pretty-print a BigDecimal with explicit locale (always US decimal format). */
+def toFormattedString(
+  value: BigDecimal,
+  decimalDigits: Int = 5,
+  roundingMode: scala.math.BigDecimal.RoundingMode.RoundingMode = scala.math.BigDecimal.RoundingMode.HALF_DOWN
+): String =
+  require(
+    decimalDigits >= 0 && decimalDigits <= 100,
+    s"decimalDigits valid range is [0, 100], both inclusive"
+  )
+  val symbols = DecimalFormatSymbols(Locale.US)
+  val pattern = if decimalDigits == 0 then "0" else "0." + ("#" * decimalDigits)
+  val df      = DecimalFormat(pattern, symbols)
+  df.format(value.setScale(decimalDigits, roundingMode).underlying())
 
-  /** New type alias: FX curves instead of static rates. */
-  type Conversion = Map[(Currency, Currency), FxCurve]
+/** DSL: `100 in USD` or `BigDecimal("99.5") in EUR` */
+extension (value: Int)
+  def in(currency: Currency)(using Converter): Money =
+    Money(BigDecimal(value), currency)
 
-  /** Pretty formatting for BigDecimal values. */
-  def toFormattedString(
-    value: BigDecimal,
-    decimalDigits: Int = 5,
-    roundingMode: RoundingMode = RoundingMode.HALF_DOWN
-  ): String = {
-    val lowerBound = 0
-    val upperBound = 100
-    require(
-      decimalDigits >= 0 && decimalDigits <= 100,
-      s"decimalDigits valid range is [$lowerBound, $upperBound], both inclusive"
-    )
+extension (value: Double)
+  def in(currency: Currency)(using Converter): Money =
+    Money(BigDecimal(value), currency)
 
-    val df =
-      if (decimalDigits == 0)
-        new DecimalFormat("0")
-      else
-        new DecimalFormat("0." + ("#" * decimalDigits))
-
-    df.format(value.setScale(decimalDigits, roundingMode).underlying())
-  }
-
-  extension (value: BigDecimal)
-    def apply(currency: Currency)(using converter: Converter): Money =
-      Money(value, currency)
-
-  extension (value: Int)
-    def apply(currency: Currency)(using converter: Converter): Money =
-      Money(BigDecimal(value), currency)
-
-  extension (value: Double)
-    def apply(currency: Currency)(using converter: Converter): Money =
-      Money(BigDecimal(value), currency)
-
-  /** Timestamp syntax: Money(100, USD).at(Instant) */
-  extension (m: Money) def at(t: Instant): Money = m.at(t)
-
-  /** Numeric instance for Money. */
-  implicit def numericMoney(using converter: Converter): NumericMoney =
-    new NumericMoney(DEFAULT_CURRENCY)
-}
+extension (value: BigDecimal)
+  def in(currency: Currency)(using Converter): Money =
+    Money(value, currency)
