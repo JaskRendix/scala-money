@@ -1,5 +1,5 @@
 package money.example
-
+import money.example.DoraAuditor
 import money._
 
 object Usage {
@@ -55,5 +55,8 @@ object Usage {
       case Right(v)  => println(v)
       case Left(err) => println(s"Conversion failed: $err")
     }
+
+    val (converted, audit) = DoraAuditor.executeAndAudit(Money(250, EUR), GBP)
+    println(audit)
   }
 }
