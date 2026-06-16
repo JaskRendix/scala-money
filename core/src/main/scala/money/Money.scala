@@ -60,7 +60,6 @@ final case class Money(
   def ===(that: Money): Boolean = compare(that) == 0
   def !==(that: Money): Boolean = compare(that) != 0
 
-  /** Consistent ordering: convert both to a canonical direction at mid. */
   override def compare(that: Money): Int =
     safeCompare(that).orThrow
 
@@ -70,6 +69,31 @@ final case class Money(
       converter
         .directRate(this.currency, that.currency, this.timestamp, FxSide.Mid)
         .map(rate => (this.amount * rate) compare that.amount)
+
+  def allocate(parts: Int): List[Money] =
+    require(parts > 0, "parts must be positive")
+    val scale     = currency.fractionDigits
+    val base      = amount.setScale(scale, RoundingMode.DOWN)
+    val share     = (base / parts).setScale(scale, RoundingMode.DOWN)
+    val remainder = (base - share * parts).setScale(scale, RoundingMode.DOWN)
+    val units     = (remainder / minUnit).setScale(0, RoundingMode.DOWN).toInt
+    List.tabulate(parts) { i =>
+      if i < units then copy(amount = share + minUnit)
+      else copy(amount = share)
+    }
+
+  def allocate(ratios: BigDecimal*): List[Money] =
+    require(ratios.nonEmpty && ratios.forall(_ > 0), "ratios must be non-empty and positive")
+    val scale     = currency.fractionDigits
+    val base      = amount.setScale(scale, RoundingMode.DOWN)
+    val total     = ratios.sum
+    val shares    = ratios.map(r => (base * r / total).setScale(scale, RoundingMode.DOWN))
+    val remainder = (base - shares.sum).setScale(scale, RoundingMode.DOWN)
+    val units     = (remainder / minUnit).setScale(0, RoundingMode.DOWN).toInt
+    shares.toList.zipWithIndex.map { case (s, i) =>
+      if i < units then copy(amount = s + minUnit)
+      else copy(amount = s)
+    }
 
   def toFormattedString(decimalDigits: Int = 5): String =
     s"${money.toFormattedString(amount, decimalDigits)} ${currency}"
@@ -81,6 +105,9 @@ final case class Money(
     case _        => false
 
   override def hashCode(): Int = (amount, currency).hashCode()
+
+  private def minUnit: BigDecimal =
+    BigDecimal(1) / BigDecimal(10).pow(currency.fractionDigits)
 
   private def performOperation(
     that: Money,

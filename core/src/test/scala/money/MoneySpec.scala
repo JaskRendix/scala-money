@@ -50,7 +50,7 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
     Gen.chooseNum(-1e6, 1e6).map(BigDecimal(_))
 
   val positiveBigDecimal: Gen[BigDecimal] =
-    Gen.chooseNum(1, 1000000).map(n => BigDecimal(n))
+    Gen.chooseNum(1, 1000000).map(n => BigDecimal(n.toString))
 
   "Money arithmetic" should {
 
@@ -161,9 +161,7 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
   "Inverse curve" should {
 
     "allow conversion in reverse direction" in {
-      // EUR→USD is defined; USD→EUR via inverse should also work
-      val result = Money(112, USD).safeTo(EUR)
-      result must beRight
+      Money(112, USD).safeTo(EUR) must beRight
     }
 
     "inverse of inverse approximates identity" in
@@ -231,7 +229,6 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
     "compare across currencies using mid" in {
       val a = Money(100, EUR)
       val b = Money(110, USD)
-      // 100 EUR * mid(1.11) = 111 USD > 110 USD
       (a > b) must beTrue
     }
 
@@ -383,6 +380,80 @@ class MoneyAdvancedSpec extends Specification with ScalaCheck {
 
     "fromInt creates Money in default currency" in {
       num.fromInt(42).currency must_== USD
+    }
+  }
+
+  "Money allocation" should {
+
+    "split into equal parts preserving total" in {
+      val m     = Money(BigDecimal("100.00"), USD)
+      val parts = m.allocate(3)
+      parts.length must_== 3
+      parts.map(_.amount).sum must_== BigDecimal("100.00")
+    }
+
+    "distribute remainder to first slots" in {
+      val parts = Money(BigDecimal("100.00"), USD).allocate(3)
+      parts(0).amount must_== BigDecimal("33.34")
+      parts(1).amount must_== BigDecimal("33.33")
+      parts(2).amount must_== BigDecimal("33.33")
+    }
+
+    "split into 1 part returns original amount" in {
+      val m = Money(BigDecimal("100.00"), USD)
+      m.allocate(1) must_== List(m)
+    }
+
+    "allocate by ratios preserving total" in {
+      val m     = Money(BigDecimal("100.00"), USD)
+      val parts = m.allocate(BigDecimal(1), BigDecimal(2), BigDecimal(2))
+      parts.length must_== 3
+      parts.map(_.amount).sum must_== BigDecimal("100.00")
+    }
+
+    "allocate by ratios gives correct proportions" in {
+      val parts = Money(BigDecimal("100.00"), USD).allocate(BigDecimal(1), BigDecimal(2), BigDecimal(2))
+      parts(0).amount must_== BigDecimal("20.00")
+      parts(1).amount must_== BigDecimal("40.00")
+      parts(2).amount must_== BigDecimal("40.00")
+    }
+
+    "allocate by equal ratios same as equal parts" in {
+      val byParts = Money(BigDecimal("100.00"), USD).allocate(3).map(_.amount)
+      val byRatios =
+        Money(BigDecimal("100.00"), USD).allocate(BigDecimal(1), BigDecimal(1), BigDecimal(1)).map(_.amount)
+      byParts must_== byRatios
+    }
+
+    "all parts share the same currency" in {
+      Money(BigDecimal("100.00"), USD).allocate(4).map(_.currency).distinct must_== List(USD)
+    }
+
+    "reject zero parts" in {
+      Money(BigDecimal("100.00"), USD).allocate(0) must throwA[IllegalArgumentException]
+    }
+
+    "reject negative parts" in {
+      Money(BigDecimal("100.00"), USD).allocate(-1) must throwA[IllegalArgumentException]
+    }
+
+    "reject empty ratios" in {
+      Money(BigDecimal("100.00"), USD).allocate() must throwA[IllegalArgumentException]
+    }
+
+    "total is preserved for any positive integer split" in
+      forAll(positiveBigDecimal, Gen.chooseNum(1, 100)) { (a, n) =>
+        val m     = Money(a, USD)
+        val parts = m.allocate(n)
+        val sum   = parts.map(_.amount).sum
+        sum must_== a.setScale(USD.fractionDigits, RoundingMode.DOWN)
+      }
+
+    "JPY allocation has zero decimal places" in {
+      val parts = Money(1000, JPY).allocate(3)
+      parts.map(_.amount).sum must_== BigDecimal(1000)
+      parts.foreach(_.amount.scale must_== 0)
+      ok
     }
   }
 }

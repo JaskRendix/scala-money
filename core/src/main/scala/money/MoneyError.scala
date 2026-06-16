@@ -12,4 +12,7 @@ final case class NoConversionPath(from: Currency, to: Currency) extends MoneyErr
 final case class InvalidAmount(reason: String) extends MoneyError:
   def message: String = s"Invalid amount: $reason"
 
+final case class AllocationError(reason: String) extends MoneyError:
+  def message: String = s"Allocation failed: $reason"
+
 extension [A](e: Either[MoneyError, A]) def orThrow: A = e.fold(err => throw RuntimeException(err.message), identity)

@@ -19,6 +19,12 @@ import java.util.Currency as JCurrency
 
 /** ISO 4217 currency, value-equal by code. */
 final case class Currency private (getCode: String):
+
+  def fractionDigits: Int =
+    JCurrency.getInstance(getCode).getDefaultFractionDigits match
+      case -1 => 2
+      case n  => n
+
   override def toString: String = getCode
 
 object Currency:

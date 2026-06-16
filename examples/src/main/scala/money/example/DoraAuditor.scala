@@ -16,24 +16,22 @@ final case class AuditRecord(
 )
 
 /**
- * DORA/FCA‑style auditor that wraps a Money conversion using safeTo. It never throws, never mutates, and always returns
- * a complete audit trail.
+ * DORA/FCA-style auditor that wraps a Money conversion using safeTo. Never throws, never mutates, always returns a
+ * complete audit trail.
  */
-object DoraAuditor {
+object DoraAuditor:
 
   /**
-   * Executes a conversion and produces:
+   * Executes a conversion and returns:
    *   - Some(Money) on success, None on failure
    *   - A complete AuditRecord describing the event
    */
   def executeAndAudit(
     money: Money,
     target: Currency
-  )(using converter: Converter): (Option[Money], AuditRecord) = {
-
+  )(using Converter): (Option[Money], AuditRecord) =
     val now = Instant.now()
-
-    money.safeTo(target) match {
+    money.safeTo(target) match
       case Right(converted) =>
         val record = AuditRecord(
           timestamp = now,
@@ -49,11 +47,8 @@ object DoraAuditor {
           timestamp = now,
           operation = "CURRENCY_CONVERSION",
           amountIn = money.toString,
-          amountOut = "0.0",
+          amountOut = "N/A",
           status = "FAILED",
-          errorDetail = Some(error.toString)
+          errorDetail = Some(error.message)
         )
         (None, record)
-    }
-  }
-}
