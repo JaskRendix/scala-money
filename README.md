@@ -58,17 +58,17 @@ Here’s a tightened, updated rewrite of your “What Actually Changed” sectio
 
 I focused on the parts that matter in a money DSL: predictable math, stable FX behavior, and a model that behaves the same way in every pipeline that touches it.
 
-Here’s the direct rundown of what was updated:
+Here's the direct rundown of what was updated:
 
-- **Currency factory** — Replaced the old case‑object zoo with a single `Currency("USD")` constructor backed by `java.util.Currency`. No drift, no maintenance overhead.
-- **Scala 3 modernization** — Removed legacy implicits and implicit classes. Everything now uses `given`, `using`, and `extension` so the API is clear and consistent.
-- **Implicit scope stability** — `given Converter` and `DEFAULT_CURRENCY` now sit in stable locations. Conversions no longer fail because an implicit slipped out of scope.
-- **FX engine rewrite** — Added multi‑leg routing, bid/ask handling, and time‑dependent curves. Direct lookups power comparison; routing powers conversion. The behavior is explicit and predictable.
-- **Comparison semantics** — Comparison now uses direct BID quotes only, matching real FX value checks and removing the old asymmetric behavior.
-- **Error model** — Introduced `MissingCurve` and `NoConversionPath` so failures are clear and typed. `safeTo` and `safeCompare` never throw.
-- **Test suite expansion** — Added tests for routing, spreads, time‑dependent curves, comparison rules, error handling, and identity properties. The suite now covers the full engine.
-- **Example update** — Rewrote the example to show routing, safe operations, comparison, rounding, and error handling. It now reflects the actual API.
-- **Formatting cleanup** — Removed formatting traps and made the codebase scalafmt‑friendly.
-- **API consistency** — Everything uses `Money(amount, currency)` with no hidden constructors or alternate paths.
+- **Currency factory** — Replaced the trait/anonymous-instance approach with a `case class` backed by `java.util.Currency`. Value equality now works correctly; two `Currency("USD")` calls produce equal instances.
+- **Scala 3 modernization** — Removed legacy implicits and implicit classes. Everything now uses `given`, `using`, and `extension` so the API is clear and consistent.
+- **FX side model** — Added `FxSide.Mid` alongside `Buy` and `Sell`. Default conversions and comparisons use mid-market rates. The old code silently used ask for everything.
+- **Inverse curve** — Converters no longer require both directions of a pair. If `EUR→USD` is defined, `USD→EUR` resolves automatically via `InverseCurve`.
+- **FX engine** — Added multi-leg routing, bid/ask spreads, and time-dependent curves. Direct lookups power comparison; BFS routing powers conversion.
+- **Comparison semantics** — Comparison uses mid-market rates in a consistent direction. The old asymmetric behavior is gone.
+- **Error model** — `MissingCurve`, `NoConversionPath`, and `InvalidAmount` replace silent throws. `safeTo` and `safeCompare` never throw. `orThrow` centralizes the unsafe path.
+- **Package structure** — Dropped `package object money` inside `package money`. Top-level Scala 3 definitions replace it. The broken `apply` DSL extensions are replaced with `in`.
+- **Formatting** — `toFormattedString` now uses explicit `Locale.US`. Decimal separators are stable regardless of JVM locale.
+- **Test suite** — 56 examples covering arithmetic laws, spread behavior, inverse curves, multi-leg routing, time-dependent rates, comparison invariants, error messages, formatting, and `NumericMoney`.
 
-The result is a small DSL that behaves the same way in every context: conversions route, comparisons don’t, errors are typed, and the API is stable.
+The result is a DSL that behaves the same way in every context: conversions route, comparisons use mid, errors are typed, and the API has one clear path for every operation.
